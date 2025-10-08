@@ -1,0 +1,99 @@
+name: Generate Commits, PRs & Issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      total_commits:
+        description: "Jumlah total commit"
+        required: true
+        default: "1500"
+      total_days:
+        description: "Jumlah hari pembagian commit"
+        required: true
+        default: "365"
+      total_prs:
+        description: "Jumlah Pull Request"
+        required: true
+        default: "100"
+      total_issues:
+        description: "Jumlah Issue"
+        required: true
+        default: "100"
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Git identity
+        run: |
+          git config user.name "wesleimu"
+          git config user.email "36747231+wesleimu@users.noreply.github.com"
+
+      - name: Generate distributed commits
+        env:
+          TOTAL_COMMITS: ${{ github.event.inputs.total_commits }}
+          TOTAL_DAYS: ${{ github.event.inputs.total_days }}
+        run: |
+          mkdir -p logs
+          git pull origin main || true
+          COMMITS_PER_DAY=$((TOTAL_COMMITS / TOTAL_DAYS))
+          START_DATE=$(date -d "$TOTAL_DAYS days ago" +%Y-%m-%d)
+
+          echo "Membuat $TOTAL_COMMITS commit selama $TOTAL_DAYS hari..."
+          for ((day=0; day<TOTAL_DAYS; day++)); do
+            commit_date=$(date -d "$START_DATE +$day days" +%Y-%m-%d)
+            for ((i=1; i<=COMMITS_PER_DAY; i++)); do
+              echo "Commit ke-$i pada $commit_date" >> logs/commit_$day.txt
+              git add logs/commit_$day.txt
+              GIT_COMMITTER_DATE="$commit_date 12:00:00" \
+              GIT_AUTHOR_DATE="$commit_date 12:00:00" \
+              git commit -m "Commit $i on $commit_date" || true
+            done
+          done
+
+          git push https://x-access-token:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ github.repository }} HEAD:main
+
+      - name: Setup GitHub CLI
+        run: |
+          sudo apt install -y gh
+          echo "${{ secrets.PERSONAL_ACCESS_TOKEN }}" | gh auth login --with-token
+
+      - name: Create pull requests (Fix)
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          TOTAL_PRS=${{ github.event.inputs.total_prs }}
+          echo "=== Membuat $TOTAL_PRS Pull Request ==="
+          for i in $(seq 1 $TOTAL_PRS); do
+            branch="pr-branch-$i-$(date +%s)"
+            echo "File PR $i dibuat pada $(date)" > logs/pr_$i.txt
+            git checkout -B $branch
+            git add logs/pr_$i.txt
+            git commit -m "Add file for PR $i" || true
+            git push -f https://x-access-token:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ github.repository }} HEAD:$branch
+            gh pr create --title "Pull Request #$i" --body "Generated via workflow" --base main --head $branch || echo "PR $i gagal dibuat"
+            sleep 2
+          done
+          git checkout main
+
+      - name: Create issues
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        run: |
+          TOTAL_ISSUES=${{ github.event.inputs.total_issues }}
+          echo "=== Membuat $TOTAL_ISSUES Issue ==="
+          for i in $(seq 1 $TOTAL_ISSUES); do
+            gh issue create \
+              --title "Issue #$i" \
+              --body "Auto-generated issue number $i untuk kontribusi" \
+              --repo ${{ github.repository }} || echo "Gagal membuat issue $i"
+            sleep 1
+          done
