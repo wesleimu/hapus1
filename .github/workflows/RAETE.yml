@@ -1,0 +1,107 @@
+name: Create Multiple Repositories
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_count:
+        description: 'Jumlah repository yang ingin dibuat'
+        required: true
+        default: 5
+      min_words:
+        description: 'Minimal kata untuk nama repo'
+        required: true
+        default: 2
+      max_words:
+        description: 'Maksimal kata untuk nama repo'
+        required: true
+        default: 3
+
+jobs:
+  create-repos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup repository generator
+        run: |
+          # Kata-kata stock untuk nama repo
+          WORDS=("alpha" "beta" "gamma" "delta" "epsilon" "theta" "sigma" "nova" "quantum" "lumen" "orbit" "vector" "matrix" "core" "byte" "pixel" "neon")
+
+          # Bahasa dan ekstensi file
+          LANGS=("python" "cpp" "golang" "swift" "java" "javascript" "ruby")
+          EXT=("py" "cpp" "go" "swift" "java" "js" "rb")
+
+          # Template isi file per bahasa
+          CONTENTS=("print('im rixzstore')" "cout << 'im rixzstore';" "fmt.Println('im rixzstore')" "print('im rixzstore')" "System.out.println('im rixzstore');" "console.log('im rixzstore');" "puts 'im rixzstore'")
+
+          echo "WORDS=${WORDS[*]}" >> $GITHUB_ENV
+          echo "LANGS=${LANGS[*]}" >> $GITHUB_ENV
+          echo "EXT=${EXT[*]}" >> $GITHUB_ENV
+          echo "CONTENTS=${CONTENTS[*]}" >> $GITHUB_ENV
+
+      - name: Create repositories
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          IFS=' ' read -r -a WORDS <<< "$WORDS"
+          IFS=' ' read -r -a LANGS <<< "$LANGS"
+          IFS=' ' read -r -a EXT <<< "$EXT"
+          IFS=' ' read -r -a CONTENTS <<< "$CONTENTS"
+
+          COUNT=${{ github.event.inputs.repo_count }}
+          MIN_WORDS=${{ github.event.inputs.min_words }}
+          MAX_WORDS=${{ github.event.inputs.max_words }}
+
+          declare -A USED_NAMES
+          echo "Creating $COUNT repositories..."
+
+          for i in $(seq 1 $COUNT); do
+            # Tentukan jumlah kata random untuk nama repo
+            WORD_NUM=$((RANDOM % (MAX_WORDS - MIN_WORDS + 1) + MIN_WORDS))
+
+            # Buat nama repo unik
+            while true; do
+              NAME=""
+              for j in $(seq 1 $WORD_NUM); do
+                NAME+="${WORDS[$RANDOM % ${#WORDS[@]}]}-"
+              done
+              NAME=${NAME%-}  # Hapus trailing "-"
+              if [[ -z "${USED_NAMES[$NAME]}" ]]; then
+                USED_NAMES[$NAME]=1
+                break
+              fi
+            done
+
+            # Pilih bahasa random
+            INDEX=$((RANDOM % ${#LANGS[@]}))
+            LANG=${LANGS[$INDEX]}
+            FILE_EXT=${EXT[$INDEX]}
+            FILE_CONTENT=${CONTENTS[$INDEX]}
+            FILE_NAME="main.${FILE_EXT}"
+
+            echo "Creating repo $NAME with $FILE_NAME ($LANG)"
+
+            # Buat repository via API dengan PAT
+            curl -s -H "Authorization: token $PAT_TOKEN" \
+                 -d "{\"name\":\"$NAME\",\"auto_init\":true}" \
+                 https://api.github.com/user/repos
+
+            # Clone repo sementara
+            git clone https://$PAT_TOKEN@github.com/${{ github.repository_owner }}/$NAME.git
+            cd $NAME
+
+            # Set git identity agar commit bisa berhasil
+            git config user.name "GitHub Actions Bot"
+            git config user.email "actions@github.com"
+
+            # Buat file dengan isi sesuai bahasa
+            echo "$FILE_CONTENT" > $FILE_NAME
+
+            git add $FILE_NAME
+            git commit -m "Add initial file $FILE_NAME"
+            git push origin main
+
+            cd ..
+            rm -rf $NAME
+          done
